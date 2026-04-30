@@ -1,73 +1,35 @@
 const vscode = require('vscode')
-const findRoot = require('find-root')
-const open = require('opn')
-const fs = require('fs')
-const path = require('path')
+const cp = require('child_process')
 
-async function askUserForPath(workspaceFolders)
-{
-    let items = workspaceFolders.map(item => item.name)
-
-    let selected = await vscode.window.showQuickPick(items)
-
-    if (selected) {
-        return workspaceFolders.find(item => item.name === selected).uri.fsPath
-    }
+const getRepoRoot = (uri) => {
+  const git = vscode.extensions.getExtension('vscode.git')?.exports.getAPI(1)
+  const repo = git?.getRepository(uri) ?? git?.repositories[0]
+  return repo?.rootUri.fsPath
 }
 
-function findGitRoot(filepath) {
-    let startingPath = fs.lstatSync(filepath).isDirectory() ? filepath : path.dirname(filepath)
+const openInSublimeMerge = async (uri) => {
+  const target =
+    uri ??
+    vscode.window.activeTextEditor?.document.uri ??
+    vscode.workspace.workspaceFolders?.[0]?.uri
+  if (!target) return
 
-    return findRoot(startingPath, function (dir) {
-        return fs.existsSync(path.resolve(dir, '.git'))
-    })
+  const root = getRepoRoot(target)
+  if (!root) {
+    vscode.window.showErrorMessage('No git repo found.')
+    return
+  }
+
+  const cmd = process.platform === 'darwin'
+    ? `open -a "Sublime Merge" "${root}"`
+    : `smerge "${root}"`
+  cp.exec(cmd)
 }
 
-async function findRelevantPath() {
-    let activeTextEditor = vscode.window.activeTextEditor
-    let workspaceFolders = vscode.workspace.workspaceFolders
-    let file = activeTextEditor && activeTextEditor.document.fileName
-
-    if (fs.existsSync(file)) {
-        return file
-    }
-    else if (workspaceFolders.length === 1) {
-        return workspaceFolders[0].uri.fsPath
-    }
-    else {
-        return await askUserForPath(workspaceFolders)
-    }
+const activate = (ctx) => {
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand('openInSublimeMerge.open', openInSublimeMerge)
+  )
 }
 
-function getAppName()
-{
-    const platforms = {
-        'darwin': 'Sublime Merge',
-    }
-
-    return platforms[process.platform] || 'smerge'
-}
-
-async function openInSublimeMerge () {
-    try {
-        const relevantPath = await findRelevantPath()
-
-        if (! relevantPath) return
-
-        const gitPath = await findGitRoot(relevantPath)
-
-        await open(gitPath, { app: getAppName() })
-    }
-    catch (err) {
-        console.error(err)
-        vscode.window.showErrorMessage('No git repo found.')
-    }
-}
-
-function activate(context) {
-    var disposable = vscode.commands.registerCommand('openInSublimeMerge.open', openInSublimeMerge)
-    context.subscriptions.push(disposable)
-}
-
-exports.activate = activate
-exports.deactivate = () => {}
+module.exports = { activate, deactivate: () => {} }
